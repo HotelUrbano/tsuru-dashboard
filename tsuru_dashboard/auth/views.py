@@ -8,6 +8,7 @@ from django.shortcuts import redirect
 from django.views.generic.base import View, TemplateView
 from django.views.generic.edit import FormView
 from django.core.urlresolvers import reverse
+from django.core.exceptions import PermissionDenied
 from django.contrib import messages
 
 from .forms import (LoginForm, SignupForm, KeyForm, TokenRequestForm,
@@ -51,7 +52,16 @@ class LoginRequiredMixin(object):
             request, *args, **kwargs)
 
 
-class ChangePassword(LoginRequiredMixin, FormView):
+class NotSupportedOnAutomaticLoggedIn(object):
+    def dispatch(self, request, *args, **kwargs):
+        print "chamado"
+        if self.request.session.get('auto_login', False):
+            messages.error(self.request, 'This action is not supported with automatic login', fail_silently=True)
+            raise PermissionDenied
+        return super(NotSupportedOnAutomaticLoggedIn, self).dispatch(
+            request, *args, **kwargs)
+
+class ChangePassword(NotSupportedOnAutomaticLoggedIn, LoginRequiredMixin, FormView):
     template_name = 'auth/change_password.html'
     form_class = ChangePasswordForm
     success_url = '/auth/change-password/'
@@ -90,7 +100,7 @@ class PasswordRecoverySuccess(TemplateView):
     template_name = 'auth/password_recovery_success.html'
 
 
-class PasswordRecovery(FormView):
+class PasswordRecovery(NotSupportedOnAutomaticLoggedIn, FormView):
     template_name = 'auth/password_recovery.html'
     form_class = PasswordRecoveryForm
     success_url = '/auth/password-recovery/success/'
@@ -110,6 +120,7 @@ class Login(FormView):
         response = requests.post(url, data=json.dumps(data))
         if response.status_code == 200:
             result = response.json()
+            self.request.session['auto_login'] = None
             self.request.session['username'] = username
             self.request.session['tsuru_token'] = "type {0}".format(result['token'])
             self.request.session['permissions'] = get_permissions(result['token'])
@@ -119,7 +130,9 @@ class Login(FormView):
     def get(self, *args, **kwargs):
         if settings.TSURU_AUTO_USERNAME and settings.TSURU_AUTO_PASSWORD:
             authorized, result = self.do_login(settings.TSURU_AUTO_USERNAME, settings.TSURU_AUTO_PASSWORD)
-            return redirect(self.get_success_url())
+            if authorized:
+                self.request.session['auto_login'] = True
+                return redirect(self.get_success_url())
         return super(Login, self).get(*args, **kwargs)
 
     def get_context_data(self, *args, **kwargs):
@@ -213,7 +226,7 @@ class Callback(View):
         return redirect('/auth/login')
 
 
-class KeyAdd(LoginRequiredMixin, FormView):
+class KeyAdd(NotSupportedOnAutomaticLoggedIn, LoginRequiredMixin, FormView):
     form_class = KeyForm
     template_name = 'auth/key_add.html'
     success_url = '/auth/key/'
