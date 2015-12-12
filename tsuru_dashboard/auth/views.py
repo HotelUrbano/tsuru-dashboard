@@ -104,6 +104,24 @@ class Login(FormView):
     template_name = 'auth/login.html'
     form_class = LoginForm
 
+    def do_login(self, username, password):
+        data = {"password": password}
+        url = '{0}/users/{1}/tokens'.format(settings.TSURU_HOST, username)
+        response = requests.post(url, data=json.dumps(data))
+        if response.status_code == 200:
+            result = response.json()
+            self.request.session['username'] = username
+            self.request.session['tsuru_token'] = "type {0}".format(result['token'])
+            self.request.session['permissions'] = get_permissions(result['token'])
+            return True, result
+        return False, response.content
+
+    def get(self, *args, **kwargs):
+        if settings.TSURU_AUTO_USERNAME and settings.TSURU_AUTO_PASSWORD:
+            authorized, result = self.do_login(settings.TSURU_AUTO_USERNAME, settings.TSURU_AUTO_PASSWORD)
+            return redirect(self.get_success_url())
+        return super(Login, self).get(*args, **kwargs)
+
     def get_context_data(self, *args, **kwargs):
         self.request.session["next_url"] = self.request.GET.get("next", "/apps")
         data = super(Login, self).get_context_data(*args, **kwargs)
@@ -128,18 +146,12 @@ class Login(FormView):
 
     def form_valid(self, form):
         username = form.cleaned_data['username']
-        data = {"password": form.cleaned_data['password']}
-        url = '{0}/users/{1}/tokens'.format(settings.TSURU_HOST, username)
-        response = requests.post(url, data=json.dumps(data))
+        authorized, result = self.do_login(username, form.cleaned_data['password'])
 
-        if response.status_code == 200:
-            result = response.json()
-            self.request.session['username'] = username
-            self.request.session['tsuru_token'] = "type {0}".format(result['token'])
-            self.request.session['permissions'] = get_permissions(result['token'])
+        if authorized:
             return super(Login, self).form_valid(form)
 
-        form.add_error(None, response.content)
+        form.add_error(None, result)
         return self.render_to_response(self.get_context_data(form=form))
 
 
